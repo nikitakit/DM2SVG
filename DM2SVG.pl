@@ -26,16 +26,34 @@ sub process_file {
         binmode(INPUT);
 
         my $height = emit_header();
+
+        my $layer = "layer1";
+        my $timestamp = 0;
+
+        my $svg_element = "<g inkscape:groupmode='layer' id='$layer'>";
         
         while (not eof(INPUT)) {
             my $tag = read_byte();
             
             if ($tag >= 128) {
                 if ($tag == 0x90) {
-                    emit_comment("End Layer " . read_byte());
+                    # emit the current svg element
+                    $svg_element = emit_element($svg_element);
+
+                    # close the last layer
+                    $svg_element = "</g>";
+                    $svg_element = emit_element($svg_element);
+
+                    # start a new layer
+                    $layer = "layer" . ( read_byte() + 1 );
+                    $timestamp = 0;
+                    $svg_element = "<g inkscape:groupmode='layer' id='$layer'>";
                 } elsif ($tag == 0x88) {
-                    emit_comment("Timestamp = " . read_timestamp() . "ms");
+                    $timestamp += read_timestamp();
                 } else {
+                    # emit the current svg element
+                    $svg_element = emit_element($svg_element);
+
                     my @coords;
 
                     # pen down
@@ -47,7 +65,8 @@ sub process_file {
                     # pen up
                     read_byte();
                     push @coords, read_point($height);
-                    emit_polyline(\@coords);
+                    my $points = gen_polyline_points(\@coords);
+                    $svg_element = "<polyline points='$points' dm:timestamp='$timestamp' />";
                 }
             } else {
                 print STDERR "Unsupported tag: $tag\n";
@@ -131,44 +150,56 @@ sub emit_header {
         unpack("A32CSSC", $data);
 
     print STDOUT <<EOF;
-<svg viewBox="0 0 $width $height" fill="none" stroke="black" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+<svg viewBox="0 0 $width $height" fill="none" stroke="black" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"
+  xmlns="http://www.w3.org/2000/svg"
+  xmlns:svg="http://www.w3.org/2000/svg"
+  xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+  xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+  xmlns:dm="http://github.com/nikitakit/DM2SVG" >
+    <metadata>
+      <dm:page
+        id = "$id"
+        version = "$version"
+        width = "$width"
+        height = "$height"
+        page_type = "$page_type" >
+      </dm:page>
+    </metadata>
     <rect width="$width" height="$height" fill="aliceblue"/>
 EOF
-    emit_comment("id = $id");
-    emit_comment("version = $version");
-    emit_comment("width = $width");
-    emit_comment("height = $height");
-    emit_comment("page type = $page_type");
 
     return $height;
 }
 
 #####
 #
-#   emit_comment
+#   emit_element
 #
 #####
-sub emit_comment {
+sub emit_element {
     my $message = shift;
     
-    print STDOUT "    <!-- $message -->\n";
+    if ($message) {
+        print STDOUT "$message \n";
+    }
+    return ""
+
 }
 
 #####
 #
-#   emit_polyline
+#   gen_polyline_points
 #
 #####
-sub emit_polyline {
+sub gen_polyline_points {
     my $coords = shift;
     my @points = map {
         $_->[0] . "," . $_->[1];
     } @$coords;
     my $data = join(" ", @points);
 
-    print STDOUT <<EOF;
-    <polyline points="$data"/>
-EOF
+    return "$data"
+
 }
 
 #####
